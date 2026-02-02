@@ -14,15 +14,12 @@ chrome.runtime.onInstalled.addListener(() => {
 // Ensure content script is injected
 async function ensureContentScript(tabId) {
   try {
-    // Try to ping the content script
     await chrome.tabs.sendMessage(tabId, { action: 'ping' });
   } catch (e) {
-    // Content script not loaded, inject it
     await chrome.scripting.executeScript({
       target: { tabId },
       files: ['lib/Readability.js', 'content.js']
     });
-    // Small delay to let it initialize
     await new Promise(r => setTimeout(r, 100));
   }
 }
@@ -39,7 +36,6 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     
     await ensureContentScript(tab.id);
     
-    // Send to content script to play
     chrome.tabs.sendMessage(tab.id, {
       action: 'speak',
       text: info.selectionText,
@@ -52,15 +48,25 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 
 // Handle messages from popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  handleMessage(message, sender, sendResponse);
-  return true;
-});
-
-async function handleMessage(message, sender, sendResponse) {
-  switch (message.action) {
-    case 'speakPage':
+  // Handle sync messages immediately
+  if (message.action === 'getState') {
+    sendResponse({ isPlaying, isPaused });
+    return false;
+  }
+  
+  if (message.action === 'stateChange') {
+    isPlaying = message.isPlaying;
+    isPaused = message.isPaused;
+    return false;
+  }
+  
+  // Handle async messages
+  (async () => {
+    try {
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (tabs[0]) {
+      if (!tabs[0]) return;
+      
+      if (message.action === 'speakPage') {
         await ensureContentScript(tabs[0].id);
         chrome.tabs.sendMessage(tabs[0].id, {
           action: 'speakPage',
@@ -68,26 +74,13 @@ async function handleMessage(message, sender, sendResponse) {
           voiceId: message.voiceId,
           speed: message.speed
         });
+      } else if (['pause', 'resume', 'stop'].includes(message.action)) {
+        chrome.tabs.sendMessage(tabs[0].id, { action: message.action }).catch(() => {});
       }
-      break;
-      
-    case 'pause':
-    case 'resume':
-    case 'stop':
-      const activeTabs = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (activeTabs[0]) {
-        chrome.tabs.sendMessage(activeTabs[0].id, { action: message.action }).catch(() => {});
-      }
-      break;
-      
-    case 'stateChange':
-      // Relay state from content script to popup
-      isPlaying = message.isPlaying;
-      isPaused = message.isPaused;
-      break;
-      
-    case 'getState':
-      sendResponse({ isPlaying, isPaused });
-      break;
-  }
-}
+    } catch (e) {
+      console.error('Error handling message:', e);
+    }
+  })();
+  
+  return false; // Don't keep channel open
+});
