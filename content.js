@@ -10,6 +10,10 @@ let currentSpeed = 1.0;
 // Listen for messages
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   switch (message.action) {
+    case 'ping':
+      sendResponse({ ok: true });
+      break;
+      
     case 'getContent':
       const text = extractContent();
       sendResponse({ text });

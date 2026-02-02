@@ -11,6 +11,22 @@ chrome.runtime.onInstalled.addListener(() => {
   });
 });
 
+// Ensure content script is injected
+async function ensureContentScript(tabId) {
+  try {
+    // Try to ping the content script
+    await chrome.tabs.sendMessage(tabId, { action: 'ping' });
+  } catch (e) {
+    // Content script not loaded, inject it
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['lib/Readability.js', 'content.js']
+    });
+    // Small delay to let it initialize
+    await new Promise(r => setTimeout(r, 100));
+  }
+}
+
 // Handle context menu click
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === 'readSelection' && info.selectionText) {
@@ -20,6 +36,8 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       console.error('No API key configured');
       return;
     }
+    
+    await ensureContentScript(tab.id);
     
     // Send to content script to play
     chrome.tabs.sendMessage(tab.id, {
@@ -34,30 +52,32 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 
 // Handle messages from popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  handleMessage(message, sender, sendResponse);
+  return true;
+});
+
+async function handleMessage(message, sender, sendResponse) {
   switch (message.action) {
     case 'speakPage':
-      // Forward to content script
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        if (tabs[0]) {
-          chrome.tabs.sendMessage(tabs[0].id, {
-            action: 'speakPage',
-            apiKey: message.apiKey,
-            voiceId: message.voiceId,
-            speed: message.speed
-          });
-        }
-      });
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tabs[0]) {
+        await ensureContentScript(tabs[0].id);
+        chrome.tabs.sendMessage(tabs[0].id, {
+          action: 'speakPage',
+          apiKey: message.apiKey,
+          voiceId: message.voiceId,
+          speed: message.speed
+        });
+      }
       break;
       
     case 'pause':
     case 'resume':
     case 'stop':
-      // Forward to content script
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        if (tabs[0]) {
-          chrome.tabs.sendMessage(tabs[0].id, { action: message.action });
-        }
-      });
+      const activeTabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (activeTabs[0]) {
+        chrome.tabs.sendMessage(activeTabs[0].id, { action: message.action }).catch(() => {});
+      }
       break;
       
     case 'stateChange':
@@ -70,5 +90,4 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ isPlaying, isPaused });
       break;
   }
-  return true;
-});
+}
