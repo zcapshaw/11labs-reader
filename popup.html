@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <h1>🎧 ElevenLabs Reader</h1>
+    
+    <div class="status" id="status">Ready</div>
+    
+    <div class="controls">
+      <button id="playPauseBtn" class="btn primary">
+        <span id="playIcon">▶</span> Read Page
+      </button>
+      <button id="stopBtn" class="btn secondary">■ Stop</button>
+    </div>
+    
+    <div class="setting">
+      <label for="speedSlider">Speed: <span id="speedValue">1.0x</span></label>
+      <input type="range" id="speedSlider" min="0.5" max="2" step="0.25" value="1">
+    </div>
+    
+    <div class="setting">
+      <label for="voiceSelect">Voice</label>
+      <select id="voiceSelect">
+        <option value="DYkrAHD8iwork3YSUBbs">Default (Sazed)</option>
+      </select>
+    </div>
+    
+    <div class="setting">
+      <label for="apiKeyInput">API Key</label>
+      <input type="password" id="apiKeyInput" placeholder="Enter ElevenLabs API key">
+      <button id="saveKeyBtn" class="btn small">Save</button>
+    </div>
+    
+    <div class="hint">
+      Tip: Select text on any page and right-click → "Read with ElevenLabs"
+    </div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
