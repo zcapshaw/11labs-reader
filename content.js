@@ -12,39 +12,37 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   switch (message.action) {
     case 'ping':
       sendResponse({ ok: true });
-      break;
+      return false;
       
     case 'getContent':
-      const text = extractContent();
-      sendResponse({ text });
-      break;
+      sendResponse({ text: extractContent() });
+      return false;
       
     case 'speakPage':
-      const pageText = extractContent();
-      speakText(pageText, message.apiKey, message.voiceId, message.speed);
-      break;
+      speakText(extractContent(), message.apiKey, message.voiceId, message.speed);
+      return false;
       
     case 'speak':
       speakText(message.text, message.apiKey, message.voiceId, message.speed);
-      break;
+      return false;
       
     case 'pause':
       pauseAudio();
-      break;
+      return false;
       
     case 'resume':
       resumeAudio();
-      break;
+      return false;
       
     case 'stop':
       stopAudio();
-      break;
+      return false;
   }
-  return true;
+  return false;
 });
 
-// Split text into chunks
-function chunkText(text, maxLength = 4000) {
+// Split text into smaller chunks for faster start
+function chunkText(text, maxLength = 500) {
   const chunks = [];
   const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
   let currentChunk = '';
@@ -59,7 +57,7 @@ function chunkText(text, maxLength = 4000) {
   }
   
   if (currentChunk) chunks.push(currentChunk.trim());
-  return chunks;
+  return chunks.filter(c => c.length > 0);
 }
 
 // Main speak function
@@ -75,14 +73,16 @@ async function speakText(text, apiKey, voiceId, speed) {
   currentVoiceId = voiceId;
   currentSpeed = speed;
   
-  const chunks = chunkText(text);
+  // Smaller chunks = faster first audio
+  const chunks = chunkText(text, 500);
   audioQueue = [...chunks];
   isPlaying = true;
   isPaused = false;
   
-  broadcastState('Reading...', true, false);
+  console.log(`Starting TTS with ${chunks.length} chunks`);
+  broadcastState(`Reading (${chunks.length} parts)...`, true, false);
   
-  await processQueue();
+  processQueue();
 }
 
 // Process audio queue
@@ -101,9 +101,10 @@ async function processQueue() {
     }
     
     const chunk = audioQueue.shift();
+    const remaining = audioQueue.length;
     
     try {
-      console.log('Fetching audio for chunk:', chunk.substring(0, 50) + '...');
+      broadcastState(`Reading (${remaining} left)...`, true, false);
       
       const response = await fetch(
         `https://api.elevenlabs.io/v1/text-to-speech/${currentVoiceId}`,
@@ -116,7 +117,7 @@ async function processQueue() {
           },
           body: JSON.stringify({
             text: chunk,
-            model_id: 'eleven_monolingual_v1',
+            model_id: 'eleven_turbo_v2_5',
             voice_settings: {
               stability: 0.5,
               similarity_boost: 0.75
@@ -127,15 +128,13 @@ async function processQueue() {
       
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('API error:', response.status, errorText);
-        throw new Error(`API error: ${response.status} - ${errorText}`);
+        throw new Error(`API ${response.status}: ${errorText.substring(0, 100)}`);
       }
       
       const audioBlob = await response.blob();
       const audioUrl = URL.createObjectURL(audioBlob);
       
       await playAudioUrl(audioUrl);
-      
       URL.revokeObjectURL(audioUrl);
       
     } catch (err) {
@@ -165,11 +164,15 @@ function playAudioUrl(url) {
     };
     
     audioElement.onerror = (e) => {
-      console.error('Audio playback error:', e);
-      reject(new Error('Audio playback failed'));
+      console.error('Audio error:', e);
+      audioElement = null;
+      resolve(); // Continue to next chunk instead of failing
     };
     
-    audioElement.play().catch(reject);
+    audioElement.play().catch(err => {
+      console.error('Play failed:', err);
+      resolve(); // Continue anyway
+    });
   });
 }
 
@@ -210,54 +213,34 @@ function broadcastState(status, playing, paused) {
     status,
     isPlaying: playing,
     isPaused: paused
-  }).catch(() => {}); // Ignore if popup is closed
+  }).catch(() => {});
 }
 
-// Extract readable content from the page
+// Extract readable content
 function extractContent() {
-  // Try Readability first if available
   if (typeof Readability !== 'undefined') {
     try {
       const documentClone = document.cloneNode(true);
       const reader = new Readability(documentClone);
       const article = reader.parse();
-      
       if (article && article.textContent) {
         return cleanText(article.textContent);
       }
     } catch (err) {
-      console.log('Readability failed, falling back to basic extraction');
+      console.log('Readability failed:', err);
     }
   }
-  
-  // Fallback: basic content extraction
   return fallbackExtraction();
 }
 
-// Basic fallback extraction
 function fallbackExtraction() {
-  const unwanted = [
-    'script', 'style', 'nav', 'header', 'footer', 'aside',
-    'iframe', 'noscript', '.ad', '.advertisement', '.sidebar',
-    '[role="navigation"]', '[role="banner"]', '[role="contentinfo"]'
-  ];
-  
+  const unwanted = ['script', 'style', 'nav', 'header', 'footer', 'aside', 'iframe', 'noscript'];
   const clone = document.body.cloneNode(true);
-  
-  unwanted.forEach(selector => {
-    clone.querySelectorAll(selector).forEach(el => el.remove());
-  });
-  
-  const mainContent = clone.querySelector('main, article, [role="main"], .content, .post, .entry');
-  const textSource = mainContent || clone;
-  
-  return cleanText(textSource.textContent || textSource.innerText);
+  unwanted.forEach(sel => clone.querySelectorAll(sel).forEach(el => el.remove()));
+  const main = clone.querySelector('main, article, [role="main"], .content, .post');
+  return cleanText((main || clone).textContent || '');
 }
 
-// Clean up extracted text
 function cleanText(text) {
-  return text
-    .replace(/\s+/g, ' ')
-    .replace(/\n\s*\n/g, '\n\n')
-    .trim();
+  return text.replace(/\s+/g, ' ').replace(/\n\s*\n/g, '\n\n').trim();
 }
