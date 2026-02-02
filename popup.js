@@ -4,7 +4,6 @@ let isPaused = false;
 
 // Elements
 const playPauseBtn = document.getElementById('playPauseBtn');
-const playIcon = document.getElementById('playIcon');
 const stopBtn = document.getElementById('stopBtn');
 const speedSlider = document.getElementById('speedSlider');
 const speedValue = document.getElementById('speedValue');
@@ -28,21 +27,11 @@ chrome.storage.sync.get(['apiKey', 'voiceId', 'speed'], (data) => {
   }
 });
 
-// Check current playback state
-chrome.runtime.sendMessage({ action: 'getState' }, (response) => {
-  if (response) {
-    isPlaying = response.isPlaying;
-    isPaused = response.isPaused;
-    updateUI();
-  }
-});
-
 // Speed slider
 speedSlider.addEventListener('input', () => {
   const speed = speedSlider.value;
   speedValue.textContent = speed + 'x';
   chrome.storage.sync.set({ speed });
-  chrome.runtime.sendMessage({ action: 'setSpeed', speed: parseFloat(speed) });
 });
 
 // Save API key
@@ -79,8 +68,16 @@ async function loadVoices(apiKey) {
       }
       voiceSelect.appendChild(option);
     });
+    
+    // Restore saved voice selection
+    chrome.storage.sync.get(['voiceId'], (data) => {
+      if (data.voiceId) {
+        voiceSelect.value = data.voiceId;
+      }
+    });
   } catch (err) {
     console.error('Failed to load voices:', err);
+    setStatus('Failed to load voices - check API key', 'error');
   }
 }
 
@@ -109,29 +106,18 @@ playPauseBtn.addEventListener('click', async () => {
     updateUI();
   } else {
     // Start reading
-    setStatus('Extracting content...', 'playing');
+    setStatus('Starting...', 'playing');
     
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    
-    chrome.tabs.sendMessage(tab.id, { action: 'getContent' }, (response) => {
-      if (chrome.runtime.lastError || !response) {
-        setStatus('Failed to extract content', 'error');
-        return;
-      }
-      
-      chrome.runtime.sendMessage({
-        action: 'speak',
-        text: response.text,
-        apiKey,
-        voiceId: voiceSelect.value,
-        speed: parseFloat(speedSlider.value)
-      });
-      
-      isPlaying = true;
-      isPaused = false;
-      updateUI();
-      setStatus('Reading...', 'playing');
+    chrome.runtime.sendMessage({
+      action: 'speakPage',
+      apiKey,
+      voiceId: voiceSelect.value || 'DYkrAHD8iwork3YSUBbs',
+      speed: parseFloat(speedSlider.value)
     });
+    
+    isPlaying = true;
+    isPaused = false;
+    updateUI();
   }
 });
 
@@ -144,7 +130,7 @@ stopBtn.addEventListener('click', () => {
   setStatus('Stopped');
 });
 
-// Listen for state changes from background
+// Listen for state changes from background/content
 chrome.runtime.onMessage.addListener((message) => {
   if (message.action === 'stateChange') {
     isPlaying = message.isPlaying;
@@ -159,13 +145,10 @@ chrome.runtime.onMessage.addListener((message) => {
 
 function updateUI() {
   if (isPlaying && !isPaused) {
-    playIcon.textContent = '⏸';
     playPauseBtn.innerHTML = '<span id="playIcon">⏸</span> Pause';
   } else if (isPaused) {
-    playIcon.textContent = '▶';
     playPauseBtn.innerHTML = '<span id="playIcon">▶</span> Resume';
   } else {
-    playIcon.textContent = '▶';
     playPauseBtn.innerHTML = '<span id="playIcon">▶</span> Read Page';
   }
 }
